@@ -15,13 +15,13 @@ int main(){
 
     // Define ColorCamera Node
     std::shared_ptr<dai::node::ColorCamera> cam_rgb = pipeline.create<dai::node::ColorCamera>();
-    cam_rgb->setPreviewSize(300, 300); // to match the mobilenet-ssd input size
+    cam_rgb->setPreviewSize(544, 320); // to match the mobilenet-ssd input size
     cam_rgb->setInterleaved(false);
 
     // Define NeuralNetwork Node
     std::shared_ptr<dai::node::NeuralNetwork> detection_nn = pipeline.create<dai::node::NeuralNetwork>();
-    // https://github.com/luxonis/depthai-tutorials/blob/master/1-hello-world/mobilenet-ssd/mobilenet-ssd.blob
-    detection_nn->setBlobPath("/home/eli/apps/depthai-helloworld-cpp/mobilenet-ssd/mobilenet-ssd.blob");
+    // https://github.com/luxonis/depthai-experiments/blob/master/social-distancing/models/person-detection-retail-0013/model.blob
+    detection_nn->setBlobPath("/home/eli/apps/depthtancing/person-detection-retail-0013/model.blob");
 
     // For inference, connect the ColorCamera output to the NeuralNetwork input
     cam_rgb->preview.link(detection_nn->input);
