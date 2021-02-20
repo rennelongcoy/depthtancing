@@ -76,6 +76,10 @@ int main(){
             std::vector<Detection> dets;
             auto in_nn = q_nn->get<dai::NNData>();
             std::vector<float> detData = in_nn->getFirstLayerFp16();
+            for (float& d : detData) {
+                std::cout << d << ", ";
+            }
+            std::cout << std::endl;
             if (detData.size() > 0) {
                 int i = 0;
                 while (detData[i*7] != -1.0f) {
