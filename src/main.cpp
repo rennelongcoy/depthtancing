@@ -1,137 +1,129 @@
+#include <cstdio>
 #include <iostream>
+#include <chrono>
 
-// include depthai library
-#include <depthai/depthai.hpp>
-
-// include depthai-utility
 #include "utility.hpp"
 
-// include opencv library (Optional, used only for the following example)
-#include <opencv2/opencv.hpp>
+// Inludes common necessary includes for development using depthai library
+#include "depthai/depthai.hpp"
 
-int main(){
-    // Create an empty Pipeline object
-    dai::Pipeline pipeline;
+//static std::string label_map[] = {"background",  "aeroplane", "bicycle", "bird",      "boat",   "bottle",      "bus",   "car",  "cat",   "chair",    "cow",
+//                                  "diningtable", "dog",       "horse",   "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"};
 
-    // Define ColorCamera Node
-    std::shared_ptr<dai::node::ColorCamera> cam_rgb = pipeline.create<dai::node::ColorCamera>();
-    cam_rgb->setPreviewSize(544, 320); // to match the mobilenet-ssd input size
-    //cam_rgb->setPreviewSize(300, 300); // to match the mobilenet-ssd input size
-    cam_rgb->setInterleaved(false);
+static std::string label_map[] = {"background", "person"};
 
-    // Define NeuralNetwork Node
-    std::shared_ptr<dai::node::NeuralNetwork> detection_nn = pipeline.create<dai::node::NeuralNetwork>();
-    // https://github.com/luxonis/depthai-experiments/blob/master/social-distancing/models/person-detection-retail-0013/model.blob
-    detection_nn->setBlobPath("/home/eli/apps/depthtancing/person-detection-retail-0013/model.blob");
-    //detection_nn->setBlobPath("/home/eli/apps/depthtancing/mobilenet-ssd/mobilenet-ssd.blob");
+static bool syncNN = true;
 
-    // For inference, connect the ColorCamera output to the NeuralNetwork input
-    cam_rgb->preview.link(detection_nn->input);
+dai::Pipeline createNNPipeline(std::string nnPath) {
+    dai::Pipeline p;
 
-    // Create XLinkOut Nodes to receive outputs from OAK
-    // Connect ColorCamera Node output to XLinkOut Node input
-    auto xout_rgb = pipeline.create<dai::node::XLinkOut>();
-    xout_rgb->setStreamName("rgb");
-    cam_rgb->preview.link(xout_rgb->input);
+    auto colorCam = p.create<dai::node::ColorCamera>();
+    auto xlinkOut = p.create<dai::node::XLinkOut>();
+    auto detectionNetwork = p.create<dai::node::MobileNetDetectionNetwork>();
+    auto nnOut = p.create<dai::node::XLinkOut>();
 
-    // Receive neural network inference results from the NeuralNetwork Node
-    // Connect NerualNetwork Node output to another XLinkOut Node input
-    auto xout_nn = pipeline.create<dai::node::XLinkOut>();
-    xout_nn->setStreamName("nn");
-    detection_nn->out.link(xout_nn->input);
+    xlinkOut->setStreamName("preview");
+    nnOut->setStreamName("detections");
 
-    try {
-        // Try connecting to device
-        dai::Device device(pipeline);
+    //colorCam->setPreviewSize(300, 300);
+    colorCam->setPreviewSize(544, 320); // to match the mobilenet-ssd input size
+    colorCam->setResolution(dai::ColorCameraProperties::SensorResolution::THE_1080_P);
+    colorCam->setInterleaved(false);
+    colorCam->setColorOrder(dai::ColorCameraProperties::ColorOrder::BGR);
+    colorCam->setFps(40);
 
-        // Get output queues
-        auto q_rgb = device.getOutputQueue("rgb");
-        auto q_nn = device.getOutputQueue("nn");
+    // testing MobileNet DetectionNetwork
+    detectionNetwork->setConfidenceThreshold(0.5f);
+    detectionNetwork->setBlobPath(nnPath);
 
-        // Start pipeline
-        device.startPipeline();
+    // Link plugins CAM -> NN -> XLINK
+    colorCam->preview.link(detectionNetwork->input);
+    if(syncNN) detectionNetwork->passthrough.link(xlinkOut->input);
+    else colorCam->preview.link(xlinkOut->input);
 
-        // Struct to hold NeuralNetwork outputs
-        struct Detection {
-            unsigned int label;
-            float score;
-            float x_min;
-            float y_min;
-            float x_max;
-            float y_max;
-        };
+    detectionNetwork->out.link(nnOut->input);
 
-        // Variable to store ColorCamera Node output
-        cv::Mat frame;
+    return p;
+}
 
-        while (true) {
-            // Pop ColorCamera output frame from queue 
-            std::shared_ptr<dai::ImgFrame> in_rgb = q_rgb->get<dai::ImgFrame>();
-            if (in_rgb) {
-                // Convert to cv::Mat data type
-                frame = toMat(in_rgb->getData(), in_rgb->getWidth(), in_rgb->getHeight(), 3, 1);
-            }
+int main(int argc, char** argv) {
+    using namespace std;
+    //std::string nnPath("/home/eli/apps/depthtancing/mobilenet-ssd/mobilenet-ssd.blob");
+    std::string nnPath("/home/eli/apps/depthtancing/person-detection-retail-0013/model.blob");
 
-            // Pop NeuralNetwork output from queue
-            std::vector<Detection> dets;
-            auto in_nn = q_nn->get<dai::NNData>();
-            std::vector<float> detData = in_nn->getFirstLayerFp16();
-            for (float& d : detData) {
-                std::cout << d << ", ";
-            }
-            std::cout << std::endl;
-            if (detData.size() > 0) {
-                int i = 0;
-                while (detData[i*7] != -1.0f) {
-                    Detection d;
-                    d.label = detData[i*7 + 1]; // label
-                    d.score = detData[i*7 + 2]; // score
-                    d.x_min = detData[i*7 + 3]; // x_min
-                    d.y_min = detData[i*7 + 4]; // y_min
-                    d.x_max = detData[i*7 + 5]; // x_max
-                    d.y_max = detData[i*7 + 6]; // y_max
-                    ++i;
-                    // Consider only outputs with confidence score > 0.8
-                    if (d.score > 0.8) {
-                        dets.push_back(d);
-                    }
-                }
-            }
+    // If path to blob specified, use that
+    if(argc > 1) {
+        nnPath = std::string(argv[1]);
+    }
 
-            // Draw bounding boxes in-frame
-            for (const auto& d : dets) {
-                int x1 = d.x_min * frame.cols;
-                int y1 = d.y_min * frame.rows;
-                int x2 = d.x_max * frame.cols;
-                int y2 = d.y_max * frame.rows;
+    // Print which blob we are using
+    printf("Using blob at path: %s\n", nnPath.c_str());
 
-                cv::rectangle(frame, cv::Rect(cv::Point(x1, y1), cv::Point(x2, y2)), cv::Scalar(0,255,0));
-            }
+    // Create pipeline
+    dai::Pipeline p = createNNPipeline(nnPath);
 
-            printf("===================== %lu detection(s) =======================\n", dets.size());
-            for (unsigned det = 0; det < dets.size(); ++det) {
-                printf("%5d | %6.4f | %7.4f | %7.4f | %7.4f | %7.4f\n",
-                        dets[det].label,
-                        dets[det].score,
-                        dets[det].x_min,
-                        dets[det].y_min,
-                        dets[det].x_max,
-                        dets[det].y_max);
-            }
+    // Connect to device with above created pipeline
+    dai::Device d(p);
+    // Start the pipeline
+    d.startPipeline();
 
-            // Display frame in "preview" window
-            cv::Mat resizedFrame;
-            cv::resize(frame, resizedFrame, cv::Size(1280, 720));
-            //cv::resize(frame, resizedFrame, cv::Size(640, 640));
-            cv::imshow("preview", resizedFrame);
+    cv::Mat frame;
+    auto preview = d.getOutputQueue("preview", 4, false);
+    auto detections = d.getOutputQueue("detections", 4, false);
 
-            // Wait and check if 'q' pressed
-            if (cv::waitKey(1) == 'q') {
-                return 0;
-            }
+    auto start_time = std::chrono::steady_clock::now();
+    int counter = 0;
+    float fps = 0;
+    while(1) {
+        auto imgFrame = preview->get<dai::ImgFrame>();
+        auto det = detections->get<dai::ImgDetections>();
+
+        counter++;
+        auto current_time = std::chrono::steady_clock::now();
+        float elapsed_s = std::chrono::duration_cast<std::chrono::milliseconds>(current_time-start_time).count() / 1000.;
+        if (elapsed_s > 1) {
+            fps = counter / elapsed_s;
+            counter = 0;
+            start_time = current_time;
         }
-    } catch (const std::runtime_error& err) {
-        std::cout << err.what() << std::endl;
+
+        if(imgFrame) {
+            frame = toMat(imgFrame->getData(), imgFrame->getWidth(), imgFrame->getHeight(), 3, 1);
+        }
+
+        auto color = cv::Scalar(255, 255, 255);
+        auto dets = det->detections;
+        for(const auto& d : dets) {
+            int x1 = d.xmin * frame.cols;
+            int y1 = d.ymin * frame.rows;
+            int x2 = d.xmax * frame.cols;
+            int y2 = d.ymax * frame.rows;
+            int xdepth = d.xdepth;
+            int ydepth = d.ydepth;
+            int zdepth = d.zdepth;
+            std::cout << "xdepth = " << xdepth << " | ydepth = " << ydepth << " | zdepth = " << zdepth << std::endl;
+            int label_index = d.label;
+            std::string label_str = to_string(label_index);
+            if(label_index < sizeof(label_map) / sizeof(label_map[0])) {
+                label_str = label_map[label_index];
+            }
+            cv::putText(frame, label_str, cv::Point(x1 + 10, y1 + 20), cv::FONT_HERSHEY_TRIPLEX, 0.5, color);
+            char conf_str[10];
+            snprintf(conf_str, sizeof conf_str, "%.2f", d.confidence*100);
+            cv::putText(frame, conf_str, cv::Point(x1 + 10, y1 + 40), cv::FONT_HERSHEY_TRIPLEX, 0.5, color);
+
+            cv::rectangle(frame, cv::Rect(cv::Point(x1, y1), cv::Point(x2, y2)), color, cv::FONT_HERSHEY_SIMPLEX);
+        }
+
+        char fps_str[15];
+        snprintf(fps_str, sizeof fps_str, "NN fps: %.2f", fps);
+        cv::putText(frame, fps_str, cv::Point(2, imgFrame->getHeight()-4), cv::FONT_HERSHEY_TRIPLEX, 0.4, color);
+
+        cv::imshow("preview", frame);
+        int key = cv::waitKey(1);
+        if(key == 'q') {
+            return 0;
+        }
     }
 
     return 0;
