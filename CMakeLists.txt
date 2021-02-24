@@ -10,6 +10,11 @@ project(${TARGET_NAME})
 # Dependencies (optional, only used for example)
 find_package(OpenCV REQUIRED)
 
+# FP16 for conversions
+find_package(FP16 REQUIRED)
+add_library(utility src/utility.cpp)
+target_link_libraries(utility FP16::fp16 ${OpenCV_LIBS})
+
 # Add source files
 add_executable("${TARGET_NAME}" 
     src/main.cpp
@@ -19,6 +24,7 @@ add_executable("${TARGET_NAME}"
 target_link_libraries(${TARGET_NAME} 
     PUBLIC 
         depthai-core
+        utility
         ${OpenCV_LIBS} # optional, used for example
 )
 
