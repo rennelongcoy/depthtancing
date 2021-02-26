@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cmath>
 
 // Inludes DepthAI Device Library
 #include <depthai/device.hpp>
@@ -78,6 +79,11 @@ int main(int argc, char** argv) {
                     detection["depth_x"] = network_results->detections[i].depth_x;
                     detection["depth_y"] = network_results->detections[i].depth_y;
                     detection["depth_z"] = network_results->detections[i].depth_z;
+
+                    detection["2d_loc_x"] = (detection["x_min"] + detection["x_max"]) / 2;
+                    detection["2d_loc_y"] = detection["y_max"];
+
+                    detection["isSafe"] = true;
                     detections.push_back(detection);
 
                     // Print detection parameters
@@ -134,13 +140,52 @@ int main(int argc, char** argv) {
                                 cv::FONT_HERSHEY_TRIPLEX,
                                 0.5,
                                 255);
+
+                    // Draw connecting lines
+                    if (i + 1 < detections.size()) {
+                        for (int j = i + 1; j < detections.size(); ++j) {
+                            double dx = detections[i]["depth_x"] - detections[j]["depth_x"];
+                            double dy = detections[i]["depth_y"] - detections[j]["depth_y"];
+                            double dz = detections[i]["depth_z"] - detections[j]["depth_z"];
+                            double distance = sqrt(pow(dx,2) + pow(dy, 2) + pow(dz,2));
+                            if (distance < 1) { // not safe
+                                detections[i]["isSafe"] = false;
+                                detections[j]["isSafe"] = false;
+                            }
+                            //std::cout << distance << std::endl;
+                            cv::line(frame,
+                                     cv::Point(detections[i]["2d_loc_x"], detections[i]["2d_loc_y"]),
+                                     cv::Point(detections[j]["2d_loc_x"], detections[j]["2d_loc_y"]),
+                                     distance >= 1 ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255),
+                                     2);
+
+                            // Write distance in meters
+                            cv::putText(frame,
+                                        std::to_string(distance) + "m",
+                                        cv::Point((detections[i]["2d_loc_x"] + detections[j]["2d_loc_x"])/2, (detections[i]["2d_loc_y"] + detections[j]["2d_loc_y"])/2),
+                                        cv::FONT_HERSHEY_TRIPLEX,
+                                        0.5,
+                                        cv::Scalar(255, 255, 255),
+                                        1);
+                        }
+                    }
+
+                    // Draw shadow effect
+                    cv::ellipse(frame,
+                                cv::Point(detections[i]["2d_loc_x"], detections[i]["2d_loc_y"]),
+                                cv::Size((detections[i]["x_max"] - detections[i]["x_min"]) / 2, 10),
+                                0,
+                                0,
+                                360,
+                                detections[i]["isSafe"] ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255),
+                                cv::FILLED);
                 }
 
                 // Display frame
-                cv::imshow("Depthtancing", frame);
-                //cv::Mat resizedFrame;
-                //cv::resize(frame, resizedFrame, cv::Size(900, 900));
-                //cv::imshow("Depthtancing", resizedFrame);
+                //cv::imshow("Depthtancing", frame);
+                cv::Mat resizedFrame;
+                cv::resize(frame, resizedFrame, cv::Size(900, 900));
+                cv::imshow("Depthtancing", resizedFrame);
 
                 // Wait and check if 'q' pressed
                 if (cv::waitKey(1) == 'q') {
