@@ -15,9 +15,6 @@ int main(int argc, char** argv) {
     Device device("", false);
 
     // Create Device Pipeline based on JSON config file
-    // person-detection-retail-0013
-    //std::string config_json_str = "{\"streams\":[\"metaout\",\"previewout\"],\"ai\":{\"calc_dist_to_bb\":true,\"blob_file\":\"/home/eli/apps/depthtancing/person-detection-retail-0013/model.blob\",\"blob_file_config\":\"/home/eli/apps/depthtancing/person-detection-retail-0013/config.json\"},\"app\":{\"sync_video_meta_streams\":true}}";
-    //std::string config_json_str = "{\"streams\":[\"metaout\",\"previewout\"],\"ai\":{\"calc_dist_to_bb\":true,\"blob_file\":\"/home/eli/apps/depthtancing/person-detection-retail-0013/model.blob\",\"blob_file_config\":\"/home/eli/apps/depthtancing/person-detection-retail-0013/config.json\"},\"app\":{\"sync_sequence_numbers\":true}}";
     // mobilenet-ssd
     std::string config_json_str = "{\"streams\":[\"metaout\",\"previewout\"],\"ai\":{\"calc_dist_to_bb\":true,\"blob_file\":\"/home/eli/apps/depthtancing/mobilenet-ssd/model.blob\",\"blob_file_config\":\"/home/eli/apps/depthtancing/mobilenet-ssd/config.json\"},\"app\":{\"sync_video_meta_streams\":true}}";
     std::shared_ptr<CNNHostPipeline> pipeline = device.create_pipeline(config_json_str);
@@ -101,6 +98,7 @@ int main(int argc, char** argv) {
                 }
 
                 // Overlay metadata on the frame in-place
+                cv::Mat overlay = frame.clone();
                 for (int i = 0; i < detections.size(); ++i) {
                     // Draw bounding box
                     cv::rectangle(frame,                                                     // image to overlay
@@ -148,12 +146,12 @@ int main(int argc, char** argv) {
                             double dy = detections[i]["depth_y"] - detections[j]["depth_y"];
                             double dz = detections[i]["depth_z"] - detections[j]["depth_z"];
                             double distance = sqrt(pow(dx,2) + pow(dy, 2) + pow(dz,2));
-                            if (distance < 1) { // not safe
+                            if (distance < 1) {
                                 detections[i]["isSafe"] = false;
                                 detections[j]["isSafe"] = false;
                             }
-                            //std::cout << distance << std::endl;
-                            cv::line(frame,
+
+                            cv::line(overlay,
                                      cv::Point(detections[i]["2d_loc_x"], detections[i]["2d_loc_y"]),
                                      cv::Point(detections[j]["2d_loc_x"], detections[j]["2d_loc_y"]),
                                      distance >= 1 ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255),
@@ -162,7 +160,8 @@ int main(int argc, char** argv) {
                             // Write distance in meters
                             cv::putText(frame,
                                         std::to_string(distance) + "m",
-                                        cv::Point((detections[i]["2d_loc_x"] + detections[j]["2d_loc_x"])/2, (detections[i]["2d_loc_y"] + detections[j]["2d_loc_y"])/2),
+                                        cv::Point((detections[i]["2d_loc_x"] + detections[j]["2d_loc_x"])/2,
+                                                  (detections[i]["2d_loc_y"] + detections[j]["2d_loc_y"])/2),
                                         cv::FONT_HERSHEY_TRIPLEX,
                                         0.5,
                                         cv::Scalar(255, 255, 255),
@@ -171,7 +170,7 @@ int main(int argc, char** argv) {
                     }
 
                     // Draw shadow effect
-                    cv::ellipse(frame,
+                    cv::ellipse(overlay,
                                 cv::Point(detections[i]["2d_loc_x"], detections[i]["2d_loc_y"]),
                                 cv::Size((detections[i]["x_max"] - detections[i]["x_min"]) / 2, 10),
                                 0,
@@ -182,9 +181,10 @@ int main(int argc, char** argv) {
                 }
 
                 // Display frame
-                //cv::imshow("Depthtancing", frame);
+                cv::Mat blendedFrame;
+                cv::addWeighted(overlay, 0.4, frame, 0.6, 0.0, blendedFrame);
                 cv::Mat resizedFrame;
-                cv::resize(frame, resizedFrame, cv::Size(900, 900));
+                cv::resize(blendedFrame, resizedFrame, cv::Size(900, 900));
                 cv::imshow("Depthtancing", resizedFrame);
 
                 // Wait and check if 'q' pressed
