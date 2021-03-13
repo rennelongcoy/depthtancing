@@ -152,8 +152,8 @@ int main(int argc, char* argv[]) {
         std::shared_ptr<dai::SpatialImgDetections> det = detections->get<dai::SpatialImgDetections>();
         std::shared_ptr<dai::ImgFrame> depth = depthQueue->get<dai::ImgFrame>();
 
-        // Obtain detections
-        std::vector<dai::SpatialImgDetection> detections = det->detections;
+        // Obtain NN detections
+        std::vector<dai::SpatialImgDetection> nn_detections = det->detections;
 
         // Update FPS measurement
         counter++;
@@ -179,44 +179,158 @@ int main(int argc, char* argv[]) {
         // C = frame.channels() = 3
         cv::Mat frame = toMat(imgFrame->getData(), imgFrame->getWidth(), imgFrame->getHeight(), 3, 1);
 
-        for (const dai::SpatialImgDetection& detection : detections) {
-            int x1 = detection.xmin * frame.cols;
-            int y1 = detection.ymin * frame.rows;
-            int x2 = detection.xmax * frame.cols;
-            int y2 = detection.ymax * frame.rows;
+        // Get properties of detected objects
+        std::vector<std::unordered_map<std::string, float>> detections;
+        for (const dai::SpatialImgDetection& nn_detection : nn_detections) {
+            /*int x1 = nn_detection.xmin * frame.cols;
+            int y1 = nn_detection.ymin * frame.rows;
+            int x2 = nn_detection.xmax * frame.cols;
+            int y2 = nn_detection.ymax * frame.rows;
 
-            int labelIndex = detection.label;
+            int labelIndex = nn_detection.label;
             std::string labelStr = std::to_string(labelIndex);
             if(labelIndex < labelMap.size()) {
                 labelStr = labelMap[labelIndex];
             }
             cv::putText(frame, labelStr, cv::Point(x1 + 10, y1 + 20), cv::FONT_HERSHEY_TRIPLEX, 0.5, color);
             std::stringstream confStr;
-            confStr << std::fixed << std::setprecision(2) << detection.confidence*100;
+            confStr << std::fixed << std::setprecision(2) << nn_detection.confidence*100;
             cv::putText(frame, confStr.str(), cv::Point(x1 + 10, y1 + 35), cv::FONT_HERSHEY_TRIPLEX, 0.5, color);
 
             std::stringstream depthX;
-            depthX << "X: " << (int)detection.spatialCoordinates.x << " mm";
+            depthX << "X: " << (int)nn_detection.spatialCoordinates.x << " mm";
             cv::putText(frame, depthX.str(), cv::Point(x1 + 10, y1 + 50), cv::FONT_HERSHEY_TRIPLEX, 0.5, color);
             std::stringstream depthY;
-            depthY << "Y: " << (int)detection.spatialCoordinates.y << " mm";
+            depthY << "Y: " << (int)nn_detection.spatialCoordinates.y << " mm";
             cv::putText(frame, depthY.str(), cv::Point(x1 + 10, y1 + 65), cv::FONT_HERSHEY_TRIPLEX, 0.5, color);
             std::stringstream depthZ;
-            depthZ << "Z: " << (int)detection.spatialCoordinates.z << " mm";
+            depthZ << "Z: " << (int)nn_detection.spatialCoordinates.z << " mm";
             cv::putText(frame, depthZ.str(), cv::Point(x1 + 10, y1 + 80), cv::FONT_HERSHEY_TRIPLEX, 0.5, color);
             
             cv::rectangle(frame, cv::Rect(cv::Point(x1, y1), cv::Point(x2, y2)), cv::Scalar(0, 255, 0), cv::FONT_HERSHEY_SIMPLEX);
+            */
+
+            std::unordered_map<std::string, float> detection;
+            detection["label"] = nn_detection.label;
+            detection["confidence"] = nn_detection.confidence;
+
+            // Calculate bounding box locations (in pixels)
+            detection["xmin"] = nn_detection.xmin * frame.cols;
+            detection["ymin"] = nn_detection.ymin * frame.rows;
+            detection["xmax"] = nn_detection.xmax * frame.cols;
+            detection["ymax"] = nn_detection.ymax * frame.rows;
+
+            // Store depth information
+            detection["depth_x"] = nn_detection.spatialCoordinates.x;
+            detection["depth_y"] = nn_detection.spatialCoordinates.y;
+            detection["depth_z"] = nn_detection.spatialCoordinates.z;
+
+            detection["2d_loc_x"] = (detection["xmin"] + detection["xmax"]) / 2;
+            detection["2d_loc_y"] = detection["ymax"];
+
+            detection["isSafe"] = true;
+            detections.push_back(detection);
         }
 
-        // Display FPS measurement
-        std::stringstream fpsStr;
-        fpsStr << std::fixed << std::setprecision(2) << fps;
-        cv::putText(frame, fpsStr.str(), cv::Point(2, imgFrame->getHeight()-4), cv::FONT_HERSHEY_TRIPLEX, 0.4, color);
+        // Overlay metadata on the frame in-place
+        cv::Mat overlay = frame.clone();
+        for (int i = 0; i < detections.size(); ++i) {
+            // Draw bounding box
+            cv::rectangle(frame,                                                     // image to overlay
+                            cv::Point(detections[i]["xmin"], detections[i]["ymin"]), // Top-Left point
+                            cv::Point(detections[i]["xmax"], detections[i]["ymax"]), // Bottom-Right point
+                            cv::Scalar(0, 255, 0),                                     // Color (BGR)
+                            2);                                                        // Thickness
+
+            // Write X
+            cv::putText(frame,
+                        "x: " + std::to_string(detections[i]["depth_x"]),
+                        cv::Point(detections[i]["xmin"], detections[i]["ymin"] + 30),
+                        cv::FONT_HERSHEY_TRIPLEX,
+                        0.5,
+                        255);
+
+            // Write Y
+            cv::putText(frame,
+                        "y: " + std::to_string(detections[i]["depth_y"]),
+                        cv::Point(detections[i]["xmin"], detections[i]["ymin"] + 50),
+                        cv::FONT_HERSHEY_TRIPLEX,
+                        0.5,
+                        255);
+
+            // Write Z
+            cv::putText(frame,
+                        "z: " + std::to_string(detections[i]["depth_z"]),
+                        cv::Point(detections[i]["xmin"], detections[i]["ymin"] + 70),
+                        cv::FONT_HERSHEY_TRIPLEX,
+                        0.5,
+                        255);
+
+            // Write confidence level
+            cv::putText(frame,
+                        "conf: " + std::to_string(detections[i]["confidence"]),
+                        cv::Point(detections[i]["xmin"], detections[i]["ymin"] + 90),
+                        cv::FONT_HERSHEY_TRIPLEX,
+                        0.5,
+                        255);
+
+            // Draw connecting lines
+            if (i + 1 < detections.size()) {
+                for (int j = i + 1; j < detections.size(); ++j) {
+                    double dx = detections[i]["depth_x"] - detections[j]["depth_x"];
+                    double dy = detections[i]["depth_y"] - detections[j]["depth_y"];
+                    double dz = detections[i]["depth_z"] - detections[j]["depth_z"];
+                    double distance = sqrt(pow(dx,2) + pow(dy, 2) + pow(dz,2));
+                    if (distance < 1500) {
+                        detections[i]["isSafe"] = false;
+                        detections[j]["isSafe"] = false;
+                    }
+
+                    cv::line(overlay,
+                                cv::Point(detections[i]["2d_loc_x"], detections[i]["2d_loc_y"]),
+                                cv::Point(detections[j]["2d_loc_x"], detections[j]["2d_loc_y"]),
+                                distance >= 1500 ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255),
+                                2);
+
+                    // Write distance in meters
+                    cv::putText(frame,
+                                std::to_string(distance) + "m",
+                                cv::Point((detections[i]["2d_loc_x"] + detections[j]["2d_loc_x"])/2,
+                                            (detections[i]["2d_loc_y"] + detections[j]["2d_loc_y"])/2),
+                                cv::FONT_HERSHEY_TRIPLEX,
+                                0.5,
+                                cv::Scalar(255, 255, 255),
+                                1);
+                }
+            }
+
+            // Draw shadow effect
+            cv::ellipse(overlay,
+                        cv::Point(detections[i]["2d_loc_x"], detections[i]["2d_loc_y"]),
+                        cv::Size((detections[i]["xmax"] - detections[i]["xmin"]) / 2, 10),
+                        0,
+                        0,
+                        360,
+                        detections[i]["isSafe"] ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255),
+                        cv::FILLED);
+        }
 
         // Display frame
+        cv::Mat blendedFrame;
+        cv::addWeighted(overlay, 0.4, frame, 0.6, 0.0, blendedFrame);
         cv::Mat resizedFrame;
-        cv::resize(frame, resizedFrame, cv::Size(900, 900));
-        cv::imshow("Depthtancing v0.01", resizedFrame);
+        cv::resize(blendedFrame, resizedFrame, cv::Size(900, 900));
+        cv::imshow("Depthtancing", resizedFrame);
+
+        // Display FPS measurement
+        //std::stringstream fpsStr;
+        //fpsStr << std::fixed << std::setprecision(2) << fps;
+        //cv::putText(frame, fpsStr.str(), cv::Point(2, imgFrame->getHeight()-4), cv::FONT_HERSHEY_TRIPLEX, 0.4, color);
+
+        // Display frame
+        //cv::Mat resizedFrame;
+        //cv::resize(frame, resizedFrame, cv::Size(900, 900));
+        //cv::imshow("Depthtancing v0.01", resizedFrame);
         int key = cv::waitKey(1);
         if (key == 'q') {
             return 0;
