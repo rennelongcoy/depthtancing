@@ -135,7 +135,7 @@ int main(int argc, char* argv[]) {
     std::shared_ptr<dai::DataOutputQueue> xoutBoundingBoxDepthMapping = device.getOutputQueue("boundingBoxDepthMapping", 4, false);
     std::shared_ptr<dai::DataOutputQueue> depthQueue = device.getOutputQueue("depth", 4, false);
 
-    // FPS-relatd variables
+    // FPS-related variables
     std::chrono::_V2::steady_clock::time_point startTime = std::chrono::steady_clock::now();
     int counter = 0;
     float fps = 0;
@@ -144,8 +144,11 @@ int main(int argc, char* argv[]) {
     cv::Scalar color(255, 255, 255);
 
     while (true) {
-        // Obtain packets form queues
+        // Obtain packets from queues
         std::shared_ptr<dai::ImgFrame> imgFrame = preview->get<dai::ImgFrame>();
+        if (imgFrame == nullptr) {
+            continue;
+        }
         std::shared_ptr<dai::SpatialImgDetections> det = detections->get<dai::SpatialImgDetections>();
         std::shared_ptr<dai::ImgFrame> depth = depthQueue->get<dai::ImgFrame>();
 
@@ -163,22 +166,20 @@ int main(int argc, char* argv[]) {
             startTime = currentTime;
         }
 
-        // Convert data from queue to OpenCV format
+        // Convert ImgFrame from queue...
         // CxHxW = 3x300x300
         // C = data_packet->dimensions[0] = 3
         // H = data_packet->dimensions[1] = 300
         // W = data_packet->dimensions[2] = 300
 
+        // ... to OpenCV format
         // HxWxC = 300x300x3
         // H = frame.rows       = 300
         // W = frame.cols       = 300
         // C = frame.channels() = 3
-        cv::Mat frame;
-        if (imgFrame) {
-            frame = toMat(imgFrame->getData(), imgFrame->getWidth(), imgFrame->getHeight(), 3, 1);
-        }
+        cv::Mat frame = toMat(imgFrame->getData(), imgFrame->getWidth(), imgFrame->getHeight(), 3, 1);
 
-        for (const auto& detection : detections) {
+        for (const dai::SpatialImgDetection& detection : detections) {
             int x1 = detection.xmin * frame.cols;
             int y1 = detection.ymin * frame.rows;
             int x2 = detection.xmax * frame.cols;
